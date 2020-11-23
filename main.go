@@ -14,7 +14,7 @@ func main() {
 		log.Fatal("$PORT must be set")
 	}
 	http.HandleFunc("/v1/lobby", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, "Hello, %q", r.URL.Path)
+		fmt.Fprintf(w, "Hello, %s. X-Forwarded-For: %s, x-Forwarded-Port: %s", r.RemoteAddr, r.Header["X-Forwarded-For"], r.Header["X-Forwarded-Port"])
 	})
 
 	log.Fatal(http.ListenAndServe(":"+port, nil))
