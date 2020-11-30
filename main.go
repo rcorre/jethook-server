@@ -11,13 +11,15 @@ import (
 	"strings"
 )
 
-const itchURL = "https://itch.io/api/1/jwt/me"
+var leaderboards []v1LeaderboardEntry = []v1LeaderboardEntry{}
 
-var leaderboards []v1LeaderboardEntry
+type v1API struct {
+	itchURL string
+}
 
 type itchUser struct {
 	Username    string
-	DisplayName string
+	DisplayName string `json:"display_name"`
 	ID          int
 }
 
@@ -46,14 +48,14 @@ func unmarshal(r io.Reader, out interface{}) error {
 	return nil
 }
 
-func getItchUser(auth string) (*itchUser, error) {
+func (v1 *v1API) getItchUser(auth string) (*itchUser, error) {
 	if !strings.HasPrefix(auth, "Bearer ") {
 		return nil, fmt.Errorf("Missing bearer in %q", auth)
 	}
 
 	client := &http.Client{}
 
-	req, err := http.NewRequest("GET", itchURL, nil)
+	req, err := http.NewRequest("GET", v1.itchURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("http.NewRequest failed: %v", err)
 	}
@@ -62,6 +64,9 @@ func getItchUser(auth string) (*itchUser, error) {
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("client.Do failed: %v", err)
+	}
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("itch request error: %s", resp.Status)
 	}
 
 	var response struct{ User itchUser }
@@ -72,8 +77,8 @@ func getItchUser(auth string) (*itchUser, error) {
 	return &response.User, nil
 }
 
-func v1GetLeaderboards(w http.ResponseWriter, r *http.Request) {
-	if _, err := getItchUser(r.Header.Get("Authorization")); err != nil {
+func (v1 *v1API) getLeaderboards(w http.ResponseWriter, r *http.Request) {
+	if _, err := v1.getItchUser(r.Header.Get("Authorization")); err != nil {
 		log.Printf("Failed to lookup user: %v", err)
 		http.Error(w, "", http.StatusUnauthorized)
 		return
@@ -91,8 +96,8 @@ func v1GetLeaderboards(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func v1PostLeaderboards(w http.ResponseWriter, r *http.Request) {
-	user, err := getItchUser(r.Header.Get("Authorization"))
+func (v1 *v1API) postLeaderboards(w http.ResponseWriter, r *http.Request) {
+	user, err := v1.getItchUser(r.Header.Get("Authorization"))
 	if err != nil {
 		log.Printf("Failed to lookup user: %v", err)
 		http.Error(w, "", http.StatusUnauthorized)
@@ -117,14 +122,15 @@ func v1PostLeaderboards(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func newV1API() *http.ServeMux {
+func newMux(itchURL string) *http.ServeMux {
 	mux := http.NewServeMux()
+	v1 := &v1API{itchURL: itchURL}
 
 	mux.HandleFunc("/v1/leaderboards", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
-			v1GetLeaderboards(w, r)
+			v1.getLeaderboards(w, r)
 		} else if r.Method == http.MethodPost {
-			v1PostLeaderboards(w, r)
+			v1.postLeaderboards(w, r)
 		} else {
 			http.Error(w, "", http.StatusMethodNotAllowed)
 		}
@@ -141,7 +147,7 @@ func main() {
 	}
 
 	server := &http.Server{
-		Handler: newV1API(),
+		Handler: newMux("https://itch.io/api/1/jwt/me"),
 		Addr:    ":" + port,
 	}
 	log.Fatal(server.ListenAndServe())
