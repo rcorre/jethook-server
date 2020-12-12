@@ -159,7 +159,8 @@ func TestV1Records(t *testing.T) {
 	// one record
 	post(map[string]interface{}{
 		"Level": "levelone",
-		"time":  123.456,
+		"Time":  123.456,
+		"Data":  []byte{1, 2, 3, 4, 5},
 	})
 	expectElementsEq(t, get(), []record{{UserName: "Amos", Level: "levelone", Time: 123.456}})
 
@@ -167,29 +168,35 @@ func TestV1Records(t *testing.T) {
 	post(map[string]interface{}{
 		"Level": "leveltwo",
 		"time":  234.567,
+		"Data":  []byte{22, 33, 45, 64},
 	})
 	expectElementsEq(t, get(), []record{{
 		UserName: "Amos",
 		Level:    "levelone",
 		Time:     123.456,
+		Data:     []byte{1, 2, 3, 4, 5},
 	}, {
 		UserName: "Amos",
 		Level:    "leveltwo",
 		Time:     234.567,
+		Data:     []byte{22, 33, 45, 64},
 	}})
 
 	// update first record
 	post(map[string]interface{}{
 		"Level": "levelone",
-		"time":  12.34,
+		"Time":  12.34,
+		"Data":  []byte{27, 23, 15, 44},
 	})
 	expectElementsEq(t, get(), []record{{
 		UserName: "Amos",
 		Level:    "levelone",
 		Time:     12.34,
+		Data:     []byte{27, 23, 15, 44},
 	}, {
 		UserName: "Amos",
 		Level:    "leveltwo",
 		Time:     234.567,
+		Data:     []byte{22, 33, 45, 64},
 	}})
 }

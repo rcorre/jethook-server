@@ -30,7 +30,8 @@ func (d *db) Init() error {
 			"itchid integer NOT NULL," +
 			"username varchar NOT NULL," +
 			"level varchar NOT NULL," +
-			"time real," +
+			"time real NOT NULL," +
+			"data bytea NOT NULL," +
 			"PRIMARY KEY(itchid, level)" +
 			")",
 	)
@@ -38,7 +39,7 @@ func (d *db) Init() error {
 }
 
 func (d *db) GetRecords() ([]record, error) {
-	rows, err := d.Query("SELECT username, level, time FROM records")
+	rows, err := d.Query("SELECT username, level, time, data FROM records")
 	if err != nil {
 		return nil, err
 	}
@@ -47,7 +48,7 @@ func (d *db) GetRecords() ([]record, error) {
 	res := []record{}
 	for rows.Next() {
 		var rec record
-		if err := rows.Scan(&rec.UserName, &rec.Level, &rec.Time); err != nil {
+		if err := rows.Scan(&rec.UserName, &rec.Level, &rec.Time, &rec.Data); err != nil {
 			return res, err
 		}
 		res = append(res, rec)
@@ -57,8 +58,8 @@ func (d *db) GetRecords() ([]record, error) {
 
 func (d *db) PutRecord(val record) error {
 	stmt, err := d.Prepare(
-		"INSERT INTO records(itchid, username, level, time) " +
-			"VALUES($1, $2, $3, $4)" +
+		"INSERT INTO records(itchid, username, level, time, data) " +
+			"VALUES($1, $2, $3, $4, $5)" +
 			"ON CONFLICT (itchid, level) DO " +
 			"UPDATE SET time = excluded.time",
 	)
@@ -67,7 +68,7 @@ func (d *db) PutRecord(val record) error {
 	}
 	defer stmt.Close()
 
-	_, err = stmt.Exec(val.UserID, val.UserName, val.Level, val.Time)
+	_, err = stmt.Exec(val.UserID, val.UserName, val.Level, val.Time, val.Data)
 	return err
 }
 
@@ -94,6 +95,7 @@ type record struct {
 	UserName string
 	Level    string
 	Time     float32
+	Data     []byte
 }
 
 func unmarshal(r io.Reader, out interface{}) error {
