@@ -16,8 +16,8 @@ import (
 
 type DB interface {
 	Init() error
-	GetRecords() ([]v1LeaderboardEntry, error)
-	PutRecord(v1LeaderboardEntry) error
+	GetRecords() ([]record, error)
+	PutRecord(record) error
 }
 
 type db struct {
@@ -30,22 +30,23 @@ func (d *db) Init() error {
 			"itchid integer NOT NULL," +
 			"username varchar NOT NULL," +
 			"level varchar NOT NULL," +
-			"time real" +
+			"time real," +
+			"PRIMARY KEY(itchid, level)" +
 			")",
 	)
 	return err
 }
 
-func (d *db) GetRecords() ([]v1LeaderboardEntry, error) {
+func (d *db) GetRecords() ([]record, error) {
 	rows, err := d.Query("SELECT username, level, time FROM records")
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	res := []v1LeaderboardEntry{}
+	res := []record{}
 	for rows.Next() {
-		var rec v1LeaderboardEntry
+		var rec record
 		if err := rows.Scan(&rec.UserName, &rec.Level, &rec.Time); err != nil {
 			return res, err
 		}
@@ -54,10 +55,12 @@ func (d *db) GetRecords() ([]v1LeaderboardEntry, error) {
 	return res, rows.Err()
 }
 
-func (d *db) PutRecord(val v1LeaderboardEntry) error {
+func (d *db) PutRecord(val record) error {
 	stmt, err := d.Prepare(
-		"INSERT INTO records(itchid, username, level, time)" +
-			"VALUES($1, $2, $3, $4)",
+		"INSERT INTO records(itchid, username, level, time) " +
+			"VALUES($1, $2, $3, $4)" +
+			"ON CONFLICT (itchid, level) DO " +
+			"UPDATE SET time = excluded.time",
 	)
 	if err != nil {
 		return err
@@ -86,7 +89,7 @@ func (u *itchUser) Name() string {
 	return u.Username
 }
 
-type v1LeaderboardEntry struct {
+type record struct {
 	UserID   int `json:"-"`
 	UserName string
 	Level    string
@@ -133,7 +136,7 @@ func (v1 *v1API) getItchUser(auth string) (*itchUser, error) {
 	return &response.User, nil
 }
 
-func (v1 *v1API) getLeaderboards(w http.ResponseWriter, r *http.Request) {
+func (v1 *v1API) getRecords(w http.ResponseWriter, r *http.Request) {
 	if _, err := v1.getItchUser(r.Header.Get("Authorization")); err != nil {
 		log.Printf("Failed to lookup user: %v", err)
 		http.Error(w, "", http.StatusUnauthorized)
@@ -159,7 +162,7 @@ func (v1 *v1API) getLeaderboards(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (v1 *v1API) postLeaderboards(w http.ResponseWriter, r *http.Request) {
+func (v1 *v1API) postRecord(w http.ResponseWriter, r *http.Request) {
 	user, err := v1.getItchUser(r.Header.Get("Authorization"))
 	if err != nil {
 		log.Printf("Failed to lookup user: %v", err)
@@ -167,7 +170,7 @@ func (v1 *v1API) postLeaderboards(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var entry v1LeaderboardEntry
+	var entry record
 	if err := unmarshal(r.Body, &entry); err != nil {
 		log.Printf("Failed to parse POST body: %v", err)
 		http.Error(w, "", http.StatusBadRequest)
@@ -181,7 +184,11 @@ func (v1 *v1API) postLeaderboards(w http.ResponseWriter, r *http.Request) {
 
 	entry.UserName = user.Name()
 	entry.UserID = user.ID
-	v1.db.PutRecord(entry)
+	if err := v1.db.PutRecord(entry); err != nil {
+		log.Printf("Failed to store record: %v", err)
+		http.Error(w, "Failed to store record", http.StatusInternalServerError)
+		return
+	}
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -189,11 +196,11 @@ func newMux(itchURL string, db DB) *http.ServeMux {
 	mux := http.NewServeMux()
 	v1 := &v1API{itchURL: itchURL, db: db}
 
-	mux.HandleFunc("/v1/leaderboards", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/v1/records", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
-			v1.getLeaderboards(w, r)
+			v1.getRecords(w, r)
 		} else if r.Method == http.MethodPost {
-			v1.postLeaderboards(w, r)
+			v1.postRecord(w, r)
 		} else {
 			http.Error(w, "", http.StatusMethodNotAllowed)
 		}

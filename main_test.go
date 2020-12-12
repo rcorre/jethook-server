@@ -62,11 +62,33 @@ func setup(t *testing.T) http.Handler {
 		panic(err)
 	}
 
+	if _, err := pg.Exec("DROP TABLE IF EXISTS records"); err != nil {
+		panic(err)
+	}
+
 	d := &db{pg}
 	if err := d.Init(); err != nil {
 		panic(err)
 	}
 	return newMux(ts.URL, d)
+}
+
+func expectElementsEq(t *testing.T, a, b []record) {
+	if len(a) != len(b) {
+		t.Errorf("len(a) = %d, len(b) = %d", len(a), len(b))
+	}
+	for x := range a {
+		found := false
+		for y := range b {
+			if x == y {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("No match for %v in %v", x, b)
+		}
+	}
 }
 
 func expectEq(t *testing.T, a, b interface{}) {
@@ -77,14 +99,14 @@ func expectEq(t *testing.T, a, b interface{}) {
 
 func TestV1AuthMissing(t *testing.T) {
 	w := httptest.NewRecorder()
-	r := httptest.NewRequest("GET", "/v1/leaderboards", nil)
+	r := httptest.NewRequest("GET", "/v1/records", nil)
 	setup(t).ServeHTTP(w, r)
 	expectEq(t, w.Code, http.StatusUnauthorized)
 }
 
 func TestV1AuthNoBearer(t *testing.T) {
 	w := httptest.NewRecorder()
-	r := httptest.NewRequest("GET", "/v1/leaderboards", nil)
+	r := httptest.NewRequest("GET", "/v1/records", nil)
 	r.Header.Set("Authorization", "blah")
 	setup(t).ServeHTTP(w, r)
 	expectEq(t, w.Code, http.StatusUnauthorized)
@@ -92,7 +114,7 @@ func TestV1AuthNoBearer(t *testing.T) {
 
 func TestV1AuthInvalid(t *testing.T) {
 	w := httptest.NewRecorder()
-	r := httptest.NewRequest("GET", "/v1/leaderboards", nil)
+	r := httptest.NewRequest("GET", "/v1/records", nil)
 	r.Header.Set("Authorization", "Bearer blah")
 	setup(t).ServeHTTP(w, r)
 	expectEq(t, w.Code, http.StatusUnauthorized)
@@ -100,37 +122,74 @@ func TestV1AuthInvalid(t *testing.T) {
 
 func TestV1AuthOk(t *testing.T) {
 	w := httptest.NewRecorder()
-	r := httptest.NewRequest("GET", "/v1/leaderboards", nil)
+	r := httptest.NewRequest("GET", "/v1/records", nil)
 	r.Header.Set("Authorization", "Bearer abc123")
 	setup(t).ServeHTTP(w, r)
 	expectEq(t, w.Code, http.StatusOK)
-	expectEq(t, w.Body.String(), "[]") // no leaderboards yet
+	expectEq(t, w.Body.String(), "[]") // no records yet
 }
 
-func TestV1Leaderboards(t *testing.T) {
-	w := httptest.NewRecorder()
-	r := httptest.NewRequest("GET", "/v1/leaderboards", nil)
-	r.Header.Set("Authorization", "Bearer abc123")
-	setup(t).ServeHTTP(w, r)
-	expectEq(t, w.Code, http.StatusOK)
-	expectEq(t, w.Body.String(), "[]") // no leaderboards yet
+func TestV1Records(t *testing.T) {
+	// TODO: expect contains same
+	v1 := setup(t)
+	get := func() []record {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("GET", "/v1/records", nil)
+		r.Header.Set("Authorization", "Bearer abc123")
+		v1.ServeHTTP(w, r)
+		expectEq(t, w.Code, http.StatusOK)
+		var res []record
+		if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+			t.Error(err)
+		}
+		return res
+	}
+	post := func(data map[string]interface{}) {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("POST", "/v1/records", bytes.NewReader(toJSON(data)))
+		r.Header.Set("Authorization", "Bearer abc123")
+		v1.ServeHTTP(w, r)
+		expectEq(t, w.Code, http.StatusOK)
+		expectEq(t, w.Body.String(), "")
+	}
 
-	w = httptest.NewRecorder()
-	r = httptest.NewRequest("POST", "/v1/leaderboards", bytes.NewReader(toJSON(
-		map[string]interface{}{
-			"Level": "levelone",
-			"time":  123.456,
-		},
-	)))
-	r.Header.Set("Authorization", "Bearer abc123")
-	setup(t).ServeHTTP(w, r)
-	expectEq(t, w.Code, http.StatusOK)
-	expectEq(t, w.Body.String(), "")
+	// no records yet
+	expectElementsEq(t, get(), []record{})
 
-	w = httptest.NewRecorder()
-	r = httptest.NewRequest("GET", "/v1/leaderboards", nil)
-	r.Header.Set("Authorization", "Bearer abc123")
-	setup(t).ServeHTTP(w, r)
-	expectEq(t, w.Code, http.StatusOK)
-	expectEq(t, w.Body.String(), `[{"UserName":"Amos","Level":"levelone","Time":123.456}]`)
+	// one record
+	post(map[string]interface{}{
+		"Level": "levelone",
+		"time":  123.456,
+	})
+	expectElementsEq(t, get(), []record{{UserName: "Amos", Level: "levelone", Time: 123.456}})
+
+	// second record, new level
+	post(map[string]interface{}{
+		"Level": "leveltwo",
+		"time":  234.567,
+	})
+	expectElementsEq(t, get(), []record{{
+		UserName: "Amos",
+		Level:    "levelone",
+		Time:     123.456,
+	}, {
+		UserName: "Amos",
+		Level:    "leveltwo",
+		Time:     234.567,
+	}})
+
+	// update first record
+	post(map[string]interface{}{
+		"Level": "levelone",
+		"time":  12.34,
+	})
+	expectElementsEq(t, get(), []record{{
+		UserName: "Amos",
+		Level:    "levelone",
+		Time:     12.34,
+	}, {
+		UserName: "Amos",
+		Level:    "leveltwo",
+		Time:     234.567,
+	}})
 }
