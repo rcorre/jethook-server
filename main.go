@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,12 +10,67 @@ import (
 	"net/http"
 	"os"
 	"strings"
+
+	_ "github.com/lib/pq"
 )
 
-var leaderboards []v1LeaderboardEntry = []v1LeaderboardEntry{}
+type DB interface {
+	Init() error
+	GetRecords() ([]v1LeaderboardEntry, error)
+	PutRecord(v1LeaderboardEntry) error
+}
+
+type db struct {
+	*sql.DB
+}
+
+func (d *db) Init() error {
+	_, err := d.Exec(
+		"CREATE TABLE IF NOT EXISTS records(" +
+			"itchid integer NOT NULL," +
+			"username varchar NOT NULL," +
+			"level varchar NOT NULL," +
+			"time real" +
+			")",
+	)
+	return err
+}
+
+func (d *db) GetRecords() ([]v1LeaderboardEntry, error) {
+	rows, err := d.Query("SELECT username, level, time FROM records")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	res := []v1LeaderboardEntry{}
+	for rows.Next() {
+		var rec v1LeaderboardEntry
+		if err := rows.Scan(&rec.UserName, &rec.Level, &rec.Time); err != nil {
+			return res, err
+		}
+		res = append(res, rec)
+	}
+	return res, rows.Err()
+}
+
+func (d *db) PutRecord(val v1LeaderboardEntry) error {
+	stmt, err := d.Prepare(
+		"INSERT INTO records(itchid, username, level, time)" +
+			"VALUES($1, $2, $3, $4)",
+	)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	_, err = stmt.Exec(val.UserID, val.UserName, val.Level, val.Time)
+	return err
+}
 
 type v1API struct {
 	itchURL string
+	db      DB
 }
 
 type itchUser struct {
@@ -84,7 +140,14 @@ func (v1 *v1API) getLeaderboards(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := json.Marshal(leaderboards)
+	records, err := v1.db.GetRecords()
+	if err != nil {
+		log.Printf("Failed to get records: %v", err)
+		http.Error(w, "Failed to get records", http.StatusInternalServerError)
+		return
+	}
+
+	resp, err := json.Marshal(records)
 	if err != nil {
 		log.Printf("Failed to marshal response: %v", err)
 		http.Error(w, "", http.StatusInternalServerError)
@@ -118,13 +181,13 @@ func (v1 *v1API) postLeaderboards(w http.ResponseWriter, r *http.Request) {
 
 	entry.UserName = user.Name()
 	entry.UserID = user.ID
-	leaderboards = append(leaderboards, entry)
+	v1.db.PutRecord(entry)
 	w.WriteHeader(http.StatusOK)
 }
 
-func newMux(itchURL string) *http.ServeMux {
+func newMux(itchURL string, db DB) *http.ServeMux {
 	mux := http.NewServeMux()
-	v1 := &v1API{itchURL: itchURL}
+	v1 := &v1API{itchURL: itchURL, db: db}
 
 	mux.HandleFunc("/v1/leaderboards", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
@@ -146,8 +209,13 @@ func main() {
 		port = "8080"
 	}
 
+	pg, err := sql.Open("postgres", os.Getenv("DATABASE_URL"))
+	if err != nil {
+		panic(err)
+	}
+
 	server := &http.Server{
-		Handler: newMux("https://itch.io/api/1/jwt/me"),
+		Handler: newMux("https://itch.io/api/1/jwt/me", &db{pg}),
 		Addr:    ":" + port,
 	}
 	log.Fatal(server.ListenAndServe())

@@ -2,12 +2,16 @@ package main
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
 	"net/http"
+
+	_ "github.com/lib/pq"
 )
 
 func toJSON(data interface{}) []byte {
@@ -53,7 +57,16 @@ func setup(t *testing.T) http.Handler {
 	}))
 	t.Cleanup(ts.Close)
 
-	return newMux(ts.URL)
+	pg, err := sql.Open("postgres", os.Getenv("DATABASE_URL"))
+	if err != nil {
+		panic(err)
+	}
+
+	d := &db{pg}
+	if err := d.Init(); err != nil {
+		panic(err)
+	}
+	return newMux(ts.URL, d)
 }
 
 func expectEq(t *testing.T, a, b interface{}) {
