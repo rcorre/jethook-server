@@ -18,6 +18,7 @@ type DB interface {
 	Init() error
 	GetRecords() ([]record, error)
 	PutRecord(record) error
+	PutUser(*itchUser) error
 }
 
 type db struct {
@@ -26,9 +27,17 @@ type db struct {
 
 func (d *db) Init() error {
 	_, err := d.Exec(
+		"CREATE TABLE IF NOT EXISTS users(" +
+			"itchid integer PRIMARY KEY," +
+			"username varchar NOT NULL UNIQUE" +
+			")",
+	)
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(
 		"CREATE TABLE IF NOT EXISTS records(" +
 			"itchid integer NOT NULL," +
-			"username varchar NOT NULL," +
 			"level varchar NOT NULL," +
 			"time real NOT NULL," +
 			"data bytea NOT NULL," +
@@ -39,7 +48,10 @@ func (d *db) Init() error {
 }
 
 func (d *db) GetRecords() ([]record, error) {
-	rows, err := d.Query("SELECT username, level, time, data FROM records")
+	rows, err := d.Query(
+		"SELECT username, level, time, data FROM records " +
+			"INNER JOIN users ON records.itchid = users.itchid",
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -56,10 +68,26 @@ func (d *db) GetRecords() ([]record, error) {
 	return res, rows.Err()
 }
 
+func (d *db) PutUser(user *itchUser) error {
+	stmt, err := d.Prepare(
+		"INSERT INTO users(itchid, username) " +
+			"VALUES($1, $2) " +
+			"ON CONFLICT (itchid) DO " +
+			"UPDATE SET username = excluded.username",
+	)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	_, err = stmt.Exec(user.ID, user.Username)
+	return err
+}
+
 func (d *db) PutRecord(val record) error {
 	stmt, err := d.Prepare(
-		"INSERT INTO records(itchid, username, level, time, data) " +
-			"VALUES($1, $2, $3, $4, $5)" +
+		"INSERT INTO records(itchid, level, time, data) " +
+			"VALUES($1, $2, $3, $4)" +
 			"ON CONFLICT (itchid, level) DO " +
 			"UPDATE SET time = excluded.time",
 	)
@@ -68,7 +96,7 @@ func (d *db) PutRecord(val record) error {
 	}
 	defer stmt.Close()
 
-	_, err = stmt.Exec(val.UserID, val.UserName, val.Level, val.Time, val.Data)
+	_, err = stmt.Exec(val.ItchID, val.Level, val.Time, val.Data)
 	return err
 }
 
@@ -83,7 +111,7 @@ type itchUser struct {
 }
 
 type record struct {
-	UserID   int `json:"-"`
+	ItchID   int `json:"-"`
 	UserName string
 	Level    string
 	Time     float32
@@ -165,6 +193,12 @@ func (v1 *v1API) postRecord(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := v1.db.PutUser(user); err != nil {
+		log.Printf("Failed to store user: %v", err)
+		http.Error(w, "Failed to store user", http.StatusInternalServerError)
+		return
+	}
+
 	var entry record
 	if err := unmarshal(r.Body, &entry); err != nil {
 		log.Printf("Failed to parse POST body: %v", err)
@@ -177,8 +211,7 @@ func (v1 *v1API) postRecord(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entry.UserName = user.Username
-	entry.UserID = user.ID
+	entry.ItchID = user.ID
 	if err := v1.db.PutRecord(entry); err != nil {
 		log.Printf("Failed to store record: %v", err)
 		http.Error(w, "Failed to store record", http.StatusInternalServerError)
