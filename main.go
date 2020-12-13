@@ -162,6 +162,7 @@ func (v1 *v1API) getRecords(w http.ResponseWriter, r *http.Request) {
 	if _, err := w.Write(resp); err != nil {
 		log.Printf("Failed to write response: %v", err)
 	}
+	log.Println("GET records ok")
 }
 
 func (v1 *v1API) postRecord(w http.ResponseWriter, r *http.Request) {
@@ -192,6 +193,7 @@ func (v1 *v1API) postRecord(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusOK)
+	log.Println("POST record ok", entry.UserName, entry.Level, entry.Time)
 }
 
 func newMux(itchURL string, db DB) *http.ServeMux {
@@ -222,10 +224,18 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	log.Println("Connected to DB")
+
+	d := &db{pg}
+	if err := d.Init(); err != nil {
+		panic(err)
+	}
+	log.Println("DB Initialized")
 
 	server := &http.Server{
 		Handler: newMux("https://itch.io/api/1/jwt/me", &db{pg}),
 		Addr:    ":" + port,
 	}
+	log.Println("Listening on", port)
 	log.Fatal(server.ListenAndServe())
 }

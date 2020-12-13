@@ -65,6 +65,7 @@ func setup(t *testing.T) http.Handler {
 	if _, err := pg.Exec("DROP TABLE IF EXISTS records"); err != nil {
 		panic(err)
 	}
+	t.Cleanup(func() { pg.Exec("DROP TABLE IF EXISTS records") })
 
 	d := &db{pg}
 	if err := d.Init(); err != nil {
