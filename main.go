@@ -78,16 +78,8 @@ type v1API struct {
 }
 
 type itchUser struct {
-	Username    string
-	DisplayName string `json:"display_name"`
-	ID          int
-}
-
-func (u *itchUser) Name() string {
-	if u.DisplayName != "" {
-		return u.DisplayName
-	}
-	return u.Username
+	Username string
+	ID       int
 }
 
 type record struct {
@@ -185,7 +177,7 @@ func (v1 *v1API) postRecord(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entry.UserName = user.Name()
+	entry.UserName = user.Username
 	entry.UserID = user.ID
 	if err := v1.db.PutRecord(entry); err != nil {
 		log.Printf("Failed to store record: %v", err)
