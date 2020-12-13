@@ -52,7 +52,8 @@ func (d *db) Init() error {
 func (d *db) GetRecords() ([]record, error) {
 	rows, err := d.Query(
 		"SELECT username, level, time, data FROM records " +
-			"INNER JOIN users ON records.itchid = users.itchid",
+			"INNER JOIN users ON records.itchid = users.itchid " +
+			"ORDER BY time asc limit 10 ",
 	)
 	if err != nil {
 		return nil, err

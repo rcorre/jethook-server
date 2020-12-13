@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -22,20 +24,27 @@ func toJSON(data interface{}) []byte {
 	return b
 }
 
-var tokenToUser map[string]interface{} = map[string]interface{}{
-	// example from https://itch.io/docs/api/serverside#reference/profileme-httpsitchioapi1keyme
-	"abc123": map[string]interface{}{
+func tokenToUser(token string) (map[string]interface{}, bool) {
+	if !strings.HasPrefix(token, "good") {
+		return nil, false
+	}
+	id, err := strconv.Atoi(strings.TrimPrefix(token, "good"))
+	if err != nil {
+		panic(err)
+	}
+
+	return map[string]interface{}{
 		"user": map[string]interface{}{
-			"username":     "fasterthanlime",
+			"username":     token,
 			"gamer":        true,
 			"display_name": "Amos",
 			"cover_url":    "https://img.itch.zone/aW1hZ2UyL3VzZXIvMjk3ODkvNjkwOTAxLnBuZw==/100x100%23/JkrN%2Bv.png",
 			"url":          "https://fasterthanlime.itch.io",
 			"press_user":   true,
 			"developer":    true,
-			"id":           29789,
+			"id":           id,
 		},
-	},
+	}, true
 }
 
 func setup(t *testing.T) http.Handler {
@@ -46,7 +55,7 @@ func setup(t *testing.T) http.Handler {
 			return
 		}
 		token := strings.TrimPrefix(auth, "Bearer ")
-		user, found := tokenToUser[token]
+		user, found := tokenToUser(token)
 		if !found {
 			http.Error(w, "bad auth: "+auth, http.StatusUnauthorized)
 			return
@@ -124,19 +133,18 @@ func TestV1AuthInvalid(t *testing.T) {
 func TestV1AuthOk(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/v1/records", nil)
-	r.Header.Set("Authorization", "Bearer abc123")
+	r.Header.Set("Authorization", "Bearer good123")
 	setup(t).ServeHTTP(w, r)
 	expectEq(t, w.Code, http.StatusOK)
 	expectEq(t, w.Body.String(), "[]") // no records yet
 }
 
 func TestV1Records(t *testing.T) {
-	// TODO: expect contains same
 	v1 := setup(t)
 	get := func() []record {
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest("GET", "/v1/records", nil)
-		r.Header.Set("Authorization", "Bearer abc123")
+		r.Header.Set("Authorization", "Bearer good123")
 		v1.ServeHTTP(w, r)
 		expectEq(t, w.Code, http.StatusOK)
 		var res []record
@@ -148,7 +156,7 @@ func TestV1Records(t *testing.T) {
 	post := func(data map[string]interface{}) {
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest("POST", "/v1/records", bytes.NewReader(toJSON(data)))
-		r.Header.Set("Authorization", "Bearer abc123")
+		r.Header.Set("Authorization", "Bearer good123")
 		v1.ServeHTTP(w, r)
 		expectEq(t, w.Code, http.StatusOK)
 		expectEq(t, w.Body.String(), "")
@@ -200,4 +208,48 @@ func TestV1Records(t *testing.T) {
 		Time:     234.567,
 		Data:     []byte{22, 33, 45, 64},
 	}})
+}
+
+func TestV1RecordsOrdering(t *testing.T) {
+	v1 := setup(t)
+	get := func() []record {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("GET", "/v1/records", nil)
+		r.Header.Set("Authorization", "Bearer good123")
+		v1.ServeHTTP(w, r)
+		expectEq(t, w.Code, http.StatusOK)
+		var res []record
+		if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+			t.Error(err)
+		}
+		return res
+	}
+	post := func(time float32, idx int) {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("POST", "/v1/records", bytes.NewReader(toJSON(map[string]interface{}{
+			"Level": "levelone",
+			"Time":  time,
+			"Data":  []byte{1, 2, 3, 4, 5},
+		})))
+		r.Header.Set("Authorization", fmt.Sprintf("Bearer good%d", idx))
+		v1.ServeHTTP(w, r)
+		expectEq(t, w.Code, http.StatusOK)
+		expectEq(t, w.Body.String(), "")
+	}
+
+	times := []float32{123.45, 54.32, 12.23, 12.23, 12.23, 13.26, 17.23, 42.16, 142.16, 112.52, 11.12, 107.42, 64.27}
+	// should be top 10
+	expected := []float32{11.12, 12.23, 12.23, 12.23, 13.26, 17.23, 42.16, 54.32, 64.27, 107.42}
+	var actual []float32
+
+	for i, e := range times {
+		post(e, i)
+	}
+	for _, act := range get() {
+		actual = append(actual, act.Time)
+	}
+	expectEq(t, len(actual), len(expected))
+	for i := range actual {
+		expectEq(t, actual[i], expected[i])
+	}
 }
