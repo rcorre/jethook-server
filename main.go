@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"compress/gzip"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -60,7 +62,19 @@ func (d *db) GetRecords() ([]record, error) {
 	res := []record{}
 	for rows.Next() {
 		var rec record
-		if err := rows.Scan(&rec.UserName, &rec.Level, &rec.Time, &rec.Data); err != nil {
+		var data []byte
+		if err := rows.Scan(&rec.UserName, &rec.Level, &rec.Time, &data); err != nil {
+			return res, err
+		}
+
+		zr, err := gzip.NewReader(bytes.NewReader(data))
+		if err != nil {
+			return res, err
+		}
+		if rec.Data, err = ioutil.ReadAll(zr); err != nil {
+			return res, err
+		}
+		if err := zr.Close(); err != nil {
 			return res, err
 		}
 		res = append(res, rec)
@@ -85,6 +99,17 @@ func (d *db) PutUser(user *itchUser) error {
 }
 
 func (d *db) PutRecord(val record) error {
+	// compress to take up less storage
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	_, err := zw.Write(val.Data)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		log.Fatal(err)
+	}
+
 	stmt, err := d.Prepare(
 		"INSERT INTO records(itchid, level, time, data) " +
 			"VALUES($1, $2, $3, $4)" +
@@ -96,7 +121,7 @@ func (d *db) PutRecord(val record) error {
 	}
 	defer stmt.Close()
 
-	_, err = stmt.Exec(val.ItchID, val.Level, val.Time, val.Data)
+	_, err = stmt.Exec(val.ItchID, val.Level, val.Time, buf.Bytes())
 	return err
 }
 
