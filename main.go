@@ -40,7 +40,7 @@ func (d *db) Init() error {
 	_, err = d.Exec(
 		"CREATE TABLE IF NOT EXISTS records(" +
 			"itchid integer NOT NULL," +
-			"level varchar NOT NULL," +
+			"level integer NOT NULL," +
 			"time real NOT NULL," +
 			"data bytea NOT NULL," +
 			"PRIMARY KEY(itchid, level)" +
@@ -139,7 +139,7 @@ type itchUser struct {
 type record struct {
 	ItchID   int `json:"-"`
 	UserName string
-	Level    string
+	Level    int
 	Time     float32
 	Data     []byte
 }
@@ -231,7 +231,7 @@ func (v1 *v1API) postRecord(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "", http.StatusBadRequest)
 		return
 	}
-	if entry.Level == "" || entry.Time <= 0 {
+	if entry.Level == 0 || entry.Time <= 0 {
 		log.Println("Missing time or level")
 		http.Error(w, "", http.StatusBadRequest)
 		return
